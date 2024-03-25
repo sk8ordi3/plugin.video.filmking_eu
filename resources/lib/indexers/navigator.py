@@ -328,7 +328,7 @@ class navigator:
                 iframe_link = "https:" + iframe_link
             return iframe_link
         
-        if re.search('<iframe', str(soup), flags=re.IGNORECASE):
+        if re.search('<iframe', str(soup), flags=re.IGNORECASE): # iframe
         
             iframe = re.findall(r'<iframe.*</iframe>', str(soup), flags=re.IGNORECASE)[0].strip()
             iframe_server = re.findall(r'//(.*?)/', iframe, flags=re.IGNORECASE)[0].strip()
@@ -352,6 +352,25 @@ class navigator:
                 'quality': 'ismeretlen',
                 'language': 'Magyar',
             })
+            
+        if re.search('\.mp4\" type=\"video/mp4', str(soup), flags=re.IGNORECASE): # video/mp4
+        
+            unkown_mp4 = re.findall(r'\"(http.*?mp4)\" type=\"video/mp4\"', str(soup), flags=re.IGNORECASE)[0].strip()
+            unkown_mp4_server = re.findall(r'//(.*?)/', unkown_mp4, flags=re.IGNORECASE)[0].strip()
+            
+            if re.search('od.lk', unkown_mp4):
+                decoded_url = urllib.parse.unquote(unkown_mp4)
+                
+                resp_something = requests.get(decoded_url, allow_redirects=False)
+                
+                unkown_mp4_link = resp_something.headers['Location']
+            
+            filtered_data.append({
+                'provider': unkown_mp4_server,
+                'provider_link': unkown_mp4_link,
+                'quality': 'ismeretlen',
+                'language': 'Magyar',
+            })            
         
         categories = soup.find_all('span', class_='elementor-icon-list-text')
         description_tag = soup.find('div', class_='movies-data')
@@ -577,6 +596,11 @@ class navigator:
             processed_urls.add(card_link)
             
             img_url = article.find('img')['src']
+            if '╤' in img_url:
+                first_img_link = soup.find("a", class_="elementor-post__thumbnail__link").find("img")
+                if first_img_link:
+                    img_url = first_img_link["src"]
+            
             year = article.find('div', class_='elementor-post__badge').text
             hun_title = article.find('h3', class_='elementor-post__title').text.strip()
             hun_title = re.sub(r'( [0-9][0-9][0-9][0-9])', r'', hun_title)
