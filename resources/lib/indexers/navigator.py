@@ -329,20 +329,8 @@ class navigator:
             return iframe_link
         
         if re.search('<iframe', str(soup), flags=re.IGNORECASE): # iframe
-        
-            iframe = re.findall(r'<iframe.*</iframe>', str(soup), flags=re.IGNORECASE)[0].strip()
-            iframe_server = re.findall(r'//(.*?)/', iframe, flags=re.IGNORECASE)[0].strip()
-            
-            if re.search('onelineplayer', iframe):
-                frame_link = re.findall(r'url=(.*?)&', iframe)[0].strip()
-                decoded_url = urllib.parse.unquote(frame_link)
-                
-                resp_something = requests.get(decoded_url, allow_redirects=False)
-                
-                iframe_link = resp_something.headers['Location']
-            
-            elif re.search(iframe_server, str(iframe)):
-                iframe_link = re.findall(r'src=\"(.*?)\"', iframe, flags=re.IGNORECASE)[0].strip()
+            iframe_link = re.findall(r'elementor-widget-container.*?\s.*?iframe.*?src=\"(.*?)\".*?</iframe>', str(soup), flags=re.IGNORECASE)[0].strip()
+            iframe_server = re.findall(r'//(.*?)/', iframe_link, flags=re.IGNORECASE)[0].strip()
             
             iframe_link = fix_iframe_link(iframe_link)
             
@@ -371,6 +359,7 @@ class navigator:
                 'quality': 'ismeretlen',
                 'language': 'Magyar',
             })            
+        
         
         categories = soup.find_all('span', class_='elementor-icon-list-text')
         description_tag = soup.find('div', class_='movies-data')
@@ -417,19 +406,20 @@ class navigator:
         self.endDirectory('movies')
 
     def getSeriesProviders(self, url, hun_title, img_url, ep_title, prov_server):
-
         from bs4 import BeautifulSoup
         import urllib.parse
         import requests
         import re
-        
+        import json
+        from urllib.parse import urljoin
+
         link = url
-        
+
         def fix_iframe_link(src_link):
             if not src_link.startswith("https:"):
                 src_link = "https:" + src_link
             return src_link
-        
+
         def append_links_to_json(data, title, links):
             for episode in data['episodes']:
                 if episode['title'] == title:
@@ -437,7 +427,7 @@ class navigator:
                     break
             else:
                 data['episodes'].append({'title': title, 'links': links})
-        
+
         def extract_links_from_first_part(soup):
             final_appended_data = {"episodes": []}
             season_pattern = re.compile(r'\d+ Évad')
@@ -446,110 +436,74 @@ class navigator:
             for accordion_item in accordion_items:
                 main_season_title_tag = accordion_item.find_previous(class_='elementor-heading-title', string=season_pattern)
                 main_season_title = main_season_title_tag.get_text(strip=True) if main_season_title_tag else None
-                main_season_num = int(re.findall(r'(\d) évad', main_season_title, flags=re.IGNORECASE)[0].strip())
-        
+                try:
+                    main_season_num = int(re.findall(r'(\d+) évad', main_season_title, flags=re.IGNORECASE)[0].strip())
+                except (IndexError, TypeError):
+                    continue
+
                 episode_title_tag = accordion_item.find(class_='elementor-accordion-title')
                 episode_title = episode_title_tag.get_text(strip=True) if episode_title_tag else None
-                episode_num = int(re.findall(r'(\d+) epizód', episode_title, flags=re.IGNORECASE)[0].strip())
+                try:
+                    episode_num = int(re.findall(r'(\d+) epizód', episode_title, flags=re.IGNORECASE)[0].strip())
+                except (IndexError, TypeError):
+                    continue
                 
                 title = f'{main_season_num}. Évad {episode_num}. rész'
-        
+
                 episode_links_list = []
                 iframe = accordion_item.find('iframe')
                 if iframe:
-                    src_link = iframe['src']
+                    src_link = iframe.get('src', '')
                     if re.search('onelineplayer', src_link):
-                        frame_link = re.findall(r'url=(.*?)&', src_link)[0].strip()
-                        decoded_url = urllib.parse.unquote(frame_link)             
-                        episode_links_list.append({"LINK": decoded_url})
-                        links_found = True
+                        try:
+                            frame_link = re.findall(r'url=(.*?)&', src_link)[0].strip()
+                            decoded_url = urllib.parse.unquote(frame_link)
+                            episode_links_list.append({"LINK": decoded_url})
+                            links_found = True
+                        except IndexError:
+                            pass
                     else:
                         src_link = fix_iframe_link(src_link)
                         episode_links_list.append({"LINK": src_link})
                         links_found = True
-        
+
                 episode_links = accordion_item.find_all('a', href=True)
                 if episode_links:
                     for link in episode_links:
                         src_link = link['href']
                         src_link = fix_iframe_link(src_link)
-                        episode_links_list.append({f"LINK": src_link})
+                        episode_links_list.append({"LINK": src_link})
                         links_found = True
                 
                 if links_found:
                     append_links_to_json(final_appended_data, title, episode_links_list)
             return final_appended_data, links_found
-        
+
         def extract_links_from_second_part(soup):
             final_appended_data = {"episodes": []}
-            main_season_title = soup.find('h2', class_='elementor-heading-title elementor-size-default').text
-        
-            season_number_match = re.search(r"(\d+) évad", main_season_title)
-            if season_number_match:
-                season_number = season_number_match.group(1)
-        
-            episode_titles = re.findall(r'(\d+) epizód', str(soup))
-            if episode_titles:
-                episode_iframes = soup.find_all('iframe')
-                if episode_iframes:
-                    num_episodes = min(len(episode_titles), len(episode_iframes))
-                    for i in range(num_episodes):
-                        episode_title = episode_titles[i]
-                        src_link = episode_iframes[i]['src']
-                        src_link = fix_iframe_link(src_link)
-                        title = f'{main_season_title} {episode_title}. rész'
-                        episode_links_list = [{f"LINK": src_link}]
-                        append_links_to_json(final_appended_data, title, episode_links_list)
-                        links_found = True
-            return final_appended_data, links_found
-        
-        def extract_links(link):
-            headers = {
-                'authority': 'filmking.eu',
-                'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
-                'user-agent': 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/102.0.0.0 Safari/537.36',
-            }
-        
-            response = requests.get(link, headers=headers)
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            categories = soup.find_all('span', class_='elementor-icon-list-text')
-        
-            categories_filtered = [category.text for category in categories if not re.match(r'\b\d+\b', category.text)]
-            
-            description_tag = soup.find('div', class_='movies-data')
-            
-            if description_tag:
-                description = description_tag.text.strip()
-            else:
-                description = None
-            
-            if description is None:
-                meta_tag = soup.find('meta', property='og:description')
-                if meta_tag and 'content' in meta_tag.attrs:
-                    description = meta_tag['content'].strip()
-            
-            if description is None:
-                description_match = re.search(r'<strong>Film leírás</strong></h2><p><strong>(.*?)</strong></p>', str(soup))
-                if description_match:
-                    description = description_match.group(1).strip()
-            
-            data_list = {'categories': categories_filtered, 'description': description}
-            
-            final_appended_data = {"episodes": []}
+            links_found = False
+            main_season_title_tag = soup.find('h2', class_='elementor-heading-title elementor-size-default')
+            main_season_title = main_season_title_tag.text.strip() if main_season_title_tag else "Unknown Season"
 
-            first_part_data, links_found = extract_links_from_first_part(soup)
-            if links_found:
-                final_appended_data = first_part_data
-            else:
-                second_part_data, links_found = extract_links_from_second_part(soup)
-                if links_found:
-                    final_appended_data = second_part_data
-            
-            final_appended_data.update(data_list)
-            
-            return final_appended_data
-            
+            season_number_match = re.search(r"(\d+) évad", main_season_title, re.IGNORECASE)
+            season_number = season_number_match.group(1) if season_number_match else "1"
+
+            episode_titles = re.findall(r'(\d+) epizód', str(soup), re.IGNORECASE)
+            episode_iframes = soup.find_all('iframe')
+
+            if episode_titles and episode_iframes:
+                num_episodes = min(len(episode_titles), len(episode_iframes))
+                for i in range(num_episodes):
+                    episode_num = episode_titles[i]
+                    src_link = episode_iframes[i].get('src', '')
+                    src_link = fix_iframe_link(src_link)
+                    title = f'{season_number}. Évad {episode_num}. rész'
+                    episode_links_list = [{"LINK": src_link}]
+                    append_links_to_json(final_appended_data, title, episode_links_list)
+                    links_found = True
+
+            return final_appended_data, links_found
+
         def color_and_concatenate(ep_title):
             episode_matches = re.findall(r'(\d+)\. rész', ep_title)
             colored_text = ""
@@ -557,22 +511,157 @@ class navigator:
                 color_code = "lightgreen" if int(episode_number) % 2 == 0 else "lightblue"
                 colored_text += f"[COLOR {color_code}]{ep_title}[/COLOR] "
             return colored_text.strip()
-        
-        final_appended_data = extract_links(link)
 
-        content = final_appended_data['description']
+        def fetch_html(url):
+            return requests.get(url).text
+
+        def get_visible_seasons(soup):
+            sel = soup.find("select", id="season-select")
+            return {opt["value"] for opt in sel.find_all("option") if opt.get("value")} if sel else set()
+
+        def locate_episodes_script(soup, base_url):
+            inline = soup.find("script", string=re.compile(r"\bconst episodes\b"))
+            if inline:
+                return inline.string or inline.get_text()
+            for tag in soup.find_all("script", src=True):
+                try:
+                    txt = requests.get(urljoin(base_url, tag["src"])).text
+                except requests.RequestException:
+                    continue
+                if "const episodes" in txt:
+                    return txt
+            raise RuntimeError("Could not locate episodes JS")
+
+        def js_object_to_dict(js_text):
+            m = re.search(r"const episodes\s*=\s*(\{.*?\});", js_text, re.DOTALL)
+            if not m:
+                raise RuntimeError("episodes literal not found")
+            obj = m.group(1)
+
+            def bt2json(m):
+                return json.dumps(m.group(1))
+            obj = re.sub(r'`([^`]*)`', bt2json, obj, flags=re.DOTALL)
+            obj = re.sub(r"(\b)([EeÉé]vad\d+)\s*:", r'"\2":', obj)
+            obj = re.sub(r"(\{|\s)(ep\d+)\s*:", r'\1"\2":', obj)
+            obj = re.sub(r",\s*([}\]])", r"\1", obj)
+
+            return json.loads(obj)
+
+        def extract_video_url(mixed_str):
+            if "<iframe" in mixed_str:
+                frag = BeautifulSoup(mixed_str, "html.parser").find("iframe")
+                url = frag.get("src", mixed_str)
+            else:
+                url = mixed_str.strip()
+            if url.startswith("//"):
+                url = "https:" + url
+            return url
+
+        def format_season_episode(season_code, episode_code):
+            s_num = int(re.search(r"(\d+)", season_code).group(1))
+            e_num = int(re.search(r"(\d+)", episode_code).group(1))
+            return f"S{s_num:02d}E{e_num:02d}"
+
+        def get_all_episodes_list(page_url):
+            html = fetch_html(page_url)
+            soup = BeautifulSoup(html, "html.parser")
+
+            visible = get_visible_seasons(soup)
+            if not visible:
+                raise RuntimeError("No seasons found in the page’s <select>")
+
+            js = locate_episodes_script(soup, page_url)
+            raw = js_object_to_dict(js)
+
+            episodes_list = []
+            for season, eps in raw.items():
+                if season not in visible:
+                    continue
+                for ep, val in eps.items():
+                    episodes_list.append({
+                        "season": season,
+                        "episode": ep,
+                        "season_ep": format_season_episode(season, ep),
+                        "url": extract_video_url(val)
+                    })
+            return episodes_list
+
+        def extract_links(link):
+            try:
+                episodes = get_all_episodes_list(link)
+                final_data = {
+                    'episodes': [{
+                        'title': item['season_ep'].replace('S', '').replace('E', '. Évad ') + '. rész',
+                        'links': [{'LINK': item['url']}]
+                    } for item in episodes],
+                    'categories': [],
+                    'description': ''
+                }
+                #xbmc.log(f'{base_log_info}| JS parser success: {len(episodes)} links', xbmc.LOGINFO)
+                return final_data
+            except Exception as e:
+                xbmc.log(f'{base_log_info}| JS parser failed: {str(e)}', xbmc.LOGWARNING)
+
+                try:
+                    response = requests.get(link, headers={
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'
+                    })
+                    soup = BeautifulSoup(response.text, 'html.parser')
+
+                    categories = [cat.text for cat in soup.find_all('span', class_='elementor-icon-list-text') 
+                                if not re.match(r'\b\d+\b', cat.text)]
+                    description = None
+                    if (desc_tag := soup.find('div', class_='movies-data')):
+                        description = desc_tag.text.strip()
+                    elif (meta_tag := soup.find('meta', property='og:description')):
+                        description = meta_tag.get('content', '').strip()
+
+                    final_appended_data = {"episodes": []}
+                    first_part_data, first_links = extract_links_from_first_part(soup)
+                    if first_links:
+                        final_appended_data = first_part_data
+                    else:
+                        second_part_data, second_links = extract_links_from_second_part(soup)
+                        if second_links:
+                            final_appended_data = second_part_data
+
+                    final_appended_data.update({
+                        'categories': categories,
+                        'description': description or 'No description available'
+                    })
+                    return final_appended_data
+                except Exception as e:
+                    xbmc.log(f'{base_log_info}| All parsers failed: {str(e)}', xbmc.LOGERROR)
+                    return {"episodes": [], 'categories': [], 'description': 'Error loading content'}
+
+        final_appended_data = extract_links(link)
+        
+        if not final_appended_data['episodes']:
+            notification = xbmcgui.Dialog()
+            notification.notification("Filmking.eu", "Törölt tartalom", time=5000)
+            return
+
+        content = final_appended_data.get('description', '')
         
         for episode in final_appended_data['episodes']:
             ep_title = episode['title']
             for link_info in episode['links']:
                 prov_link = link_info['LINK']
-                prov_server = re.findall(r'//(.*?)/', str(prov_link))[0].strip()
+                if re.search(f'video.hu', prov_link):
+                    notification = xbmcgui.Dialog()
+                    notification.notification("Filmking.eu", "Működésképtelen video.hu linkek kihagyva!", time=5000)                    
+                    continue
+                elif re.search(f'od.lk', prov_link):
+                    notification = xbmcgui.Dialog()
+                    notification.notification("Filmking.eu", "Működésképtelen od.lk linkek kihagyva!", time=5000)
+                    continue                
+                
+                prov_server = re.findall(r'//([^/]+)', prov_link)[0].split('.')[0]
                 
                 colored_text = color_and_concatenate(ep_title)
 
-                title_text = f'[B]{colored_text} - {hun_title} # ([COLOR orange]{prov_server}[/COLOR])[/B]'
-                url_params = f'playmovie&url={quote_plus(prov_link)}&img_url={img_url}&hun_title={hun_title}&content={content}&ep_title={ep_title}&prov_server={prov_server}'
-
+                title_text = f'[B]([COLOR orange]{prov_server}[/COLOR]) # {colored_text} - {hun_title}[/B]'
+                url_params = f'playmovie&url={urllib.parse.quote_plus(prov_link)}&img_url={img_url}&hun_title={hun_title}&content={content}'
                 metadata = {'title': f'{ep_title} - {hun_title}', 'plot': content}
 
                 self.addDirectoryItem(title_text, url_params, img_url, 'DefaultMovies.png', isFolder=False, meta=metadata)
