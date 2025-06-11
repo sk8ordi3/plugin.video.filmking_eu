@@ -1,3 +1,5 @@
+[B]1.1.0[/B]
+- html kódolt karakterek kezelése
 [B]1.0.9[/B]
 - Oldal változás lekövetése
 [B]1.0.8[/B]

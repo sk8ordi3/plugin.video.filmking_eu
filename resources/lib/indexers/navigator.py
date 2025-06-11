@@ -24,6 +24,7 @@ import requests
 import urllib.parse
 import resolveurl as urlresolver
 from resources.lib.modules.utils import py2_decode, py2_encode
+import html
 
 sysaddon = sys.argv[0]
 syshandle = int(sys.argv[1])
@@ -747,7 +748,7 @@ class navigator:
         self.endDirectory('movies')
 
     def playMovie(self, url):
-
+        url = html.unescape(url)
         if re.search('iframe.mediadelivery', url):
             try:
                 import requests
